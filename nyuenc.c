@@ -13,11 +13,19 @@
 unsigned char global_buff[ONE_GB];
 int n_jobs = -1;
 
+// https://www.geeksforgeeks.org/run-length-encoding/
 void rle_block(int start, int finish) {
     for (int i = start; i < finish; i++) {
-        printf("%c", global_buff[i]);
+        // printf("%c", global_buff[i]);
+        unsigned char count = 1;
+        while (i < finish - 1 && global_buff[i] == global_buff[i + 1]) {
+            count++;
+            i++;
+        }
+
+        printf("%c%c", global_buff[i], count);
     }
-    printf("\n");
+    // printf("\n");
 }
 
 int main(int argc, char *argv[]) {
