@@ -8,9 +8,14 @@
 #include <sys/stat.h>
 #include <stdlib.h>
 
-void rle_block(char* start, off_t len) {
-    for (long long i = 0; i < len; i++) {
-            printf("%c", start[i]);
+#define ONE_GB (1024 * 1024 * 1024)
+
+unsigned char global_buff[ONE_GB];
+int n_jobs = -1;
+
+void rle_block(int start, int finish) {
+    for (int i = start; i < finish; i++) {
+        printf("%c", global_buff[i]);
     }
     printf("\n");
 }
@@ -20,10 +25,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
     //https://www.gnu.org/software/libc/manual/html_node/Example-of-Getopt.html
-    int n_jobs = -1;
-    int index;
     int c;
-
     opterr = 0;
 
     while ((c = getopt (argc, argv, "j:")) != -1)
@@ -45,50 +47,29 @@ int main(int argc, char *argv[]) {
             abort ();
     }
 
-    // printf ("jflag = %d\n", n_jobs);
-
-    int fd;
-    struct stat sb;
-    off_t total_size = 0, last_size = 0;
-    char *global_mem_pt = NULL;
+    long long total_size = 0;
+    unsigned char *p = global_buff;
 
     // Map all specified files into memory
-    for (index = optind; index < argc; index++) {
+    // https://stackoverflow.com/questions/55928474/how-to-read-multiple-txt-files-into-a-single-buffer
+    for (int index = optind; index < argc; index++) {
         char* filename = argv[index];
-        
-        if ((fd = open(filename, O_RDONLY, S_IRUSR | S_IWUSR)) == -1) {
-            perror("Couldn't open file");
-            exit(1);
-        }
+        FILE *fp = fopen(filename, "rb");
 
-        if (fstat(fd, &sb) == -1) {
-            perror("Couldn't get file size\n");
-        }
+        fseek(fp, 0, SEEK_END);
+        long bytes = ftell(fp);
+        fseek(fp, 0, SEEK_SET);   
 
-        if (global_mem_pt == NULL) {
-            global_mem_pt = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
-            if (global_mem_pt == MAP_FAILED) {
-                perror("Map failed");
-                exit(1);
-            }
-        } else {
-            printf("Performing secondary mmap\n");
-            // Allocate alongside the last mmap
-            if (mmap(global_mem_pt + last_size, sb.st_size, PROT_READ, MAP_SHARED, fd, 0) == MAP_FAILED) {
-                perror("Secondary map failed");
-                exit(1);
-            }
-        }
+        fread(p, (size_t) bytes, 1, fp);
 
-        last_size = sb.st_size;
-        // printf("Last size = " + )
-        total_size += last_size;
+        p+= bytes;
+        total_size += bytes;
 
-        close(fd);
+        fclose(fp);
     }
 
     if (n_jobs == -1) {
-        rle_block(global_mem_pt, total_size);
+        rle_block(0, total_size);
     } else {
         printf("Parallel not yet supported\n");
         exit(1);
