@@ -12,26 +12,11 @@
 
 unsigned char global_buff[ONE_GB];
 int n_jobs = -1;
+int total_size = 0;
 
-// https://www.geeksforgeeks.org/run-length-encoding/
-void rle_block(int start, int finish) {
-    for (int i = start; i < finish; i++) {
-        // printf("%c", global_buff[i]);
-        unsigned char count = 1;
-        while (i < finish - 1 && global_buff[i] == global_buff[i + 1]) {
-            count++;
-            i++;
-        }
+const int TEST = 1;
 
-        printf("%c%c", global_buff[i], count);
-    }
-    // printf("\n");
-}
-
-int main(int argc, char *argv[]) {
-    if (argc == 1) {
-        return 0;
-    }
+void parse_opts(int argc, char *argv[]) {
     //https://www.gnu.org/software/libc/manual/html_node/Example-of-Getopt.html
     int c;
     opterr = 0;
@@ -50,16 +35,16 @@ int main(int argc, char *argv[]) {
                 fprintf (stderr,
                         "Unknown option character `\\x%x'.\n",
                         optopt);
-            return 1;
+            return;
             default:
             abort ();
     }
+}
 
-    long long total_size = 0;
-    unsigned char *p = global_buff;
-
+void map_files(int argc, char *argv[]) {
     // Map all specified files into memory
     // https://stackoverflow.com/questions/55928474/how-to-read-multiple-txt-files-into-a-single-buffer
+    unsigned char *p = global_buff;
     for (int index = optind; index < argc; index++) {
         char* filename = argv[index];
         FILE *fp = fopen(filename, "rb");
@@ -75,12 +60,54 @@ int main(int argc, char *argv[]) {
 
         fclose(fp);
     }
+}
+
+void print_rle(char c, unsigned char count) {
+    if (TEST) {
+        printf("%c%d", c, count);
+    } else {
+        printf("%c%c", c, count);
+    }
+}
+
+// https://www.geeksforgeeks.org/run-length-encoding/
+void rle_block(int start, int finish) {
+    for (int i = start; i < finish; i++) {
+        // printf("%c", global_buff[i]);
+        unsigned char count = 1;
+        while (i < finish - 1 && global_buff[i] == global_buff[i + 1]) {
+            count++;
+            i++;
+        }
+
+        print_rle(global_buff[i], count);
+    }
+}
+
+void rle_sequential() {
+    rle_block(0, total_size);
+}
+
+void rle_parallel() {
+    rle_block(0, total_size);
+}
+
+
+
+int main(int argc, char *argv[]) {
+    if (argc == 1) {
+        return 0;
+    }
+
+    parse_opts(argc, argv);
+
+    map_files(argc, argv);
 
     if (n_jobs == -1) {
-        rle_block(0, total_size);
+        rle_sequential();
     } else {
-        printf("Parallel not yet supported\n");
-        exit(1);
+        printf("Doing parallel...\n");
+        rle_parallel();
     }
 
     return 0;
