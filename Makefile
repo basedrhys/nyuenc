@@ -1,12 +1,12 @@
 CC=gcc
-CFLAGS=-g -pedantic -std=gnu17 -Wall -Wextra -pthread -Werror
-
-.PHONY: all
-all: nyuenc
-
-nyuenc: nyuenc.o
+CFLAGS=-g -pedantic -std=gnu17 -Wall -Wextra -pthread #-Werror
+LIBS= -lm
+.PHONY: nyuenc clean
+nyuenc: nyuenc.o 
+	$(CC) $(CFLAGS) nyuenc.o -o nyuenc $(LIBS)
 
 nyuenc.o: nyuenc.c
+	$(CC) $(CFLAGS) -c nyuenc.c
 # nyush: nyush.o builtins/builtins.o externals/externals.o logging/logging.o redirection/redirection.o
 
 # nyush.o: nyush.c builtins/builtins.h externals/externals.h logging/logging.h redirection/redirection.h
@@ -19,6 +19,6 @@ nyuenc.o: nyuenc.c
 
 # redirection.o: redirection/redirection.c redirection/redirection.h
 
-.PHONY: clean
+# .PHONY: clean
 clean:
-	rm -f *.o nyush
+	rm -f *.o nyuenc
