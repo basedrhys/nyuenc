@@ -1,6 +1,5 @@
 CC=gcc
-CFLAGS=-g -pedantic -std=gnu17 -Wall -Wextra -pthread
-# -Werror
+CFLAGS=-g -pedantic -std=gnu17 -Wall -Wextra -pthread -Werror
 
 .PHONY: all
 all: nyuenc

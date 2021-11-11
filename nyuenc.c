@@ -10,7 +10,10 @@
 
 #define ONE_GB (1024 * 1024 * 1024)
 
+#define FOUR_KB (1024 * 4)
+
 unsigned char global_buff[ONE_GB];
+
 int n_jobs = -1;
 int total_size = 0;
 
@@ -44,6 +47,7 @@ void parse_opts(int argc, char *argv[]) {
 void map_files(int argc, char *argv[]) {
     // Map all specified files into memory
     // https://stackoverflow.com/questions/55928474/how-to-read-multiple-txt-files-into-a-single-buffer
+    // TODO truncate files that are too large
     unsigned char *p = global_buff;
     for (int index = optind; index < argc; index++) {
         char* filename = argv[index];
@@ -71,11 +75,11 @@ void print_rle(char c, unsigned char count) {
 }
 
 // https://www.geeksforgeeks.org/run-length-encoding/
-void rle_block(int start, int finish) {
-    for (int i = start; i < finish; i++) {
+void rle_sequential() {
+    for (int i = 0; i < total_size; i++) {
         // printf("%c", global_buff[i]);
         unsigned char count = 1;
-        while (i < finish - 1 && global_buff[i] == global_buff[i + 1]) {
+        while (i < total_size - 1 && global_buff[i] == global_buff[i + 1]) {
             count++;
             i++;
         }
@@ -84,15 +88,9 @@ void rle_block(int start, int finish) {
     }
 }
 
-void rle_sequential() {
-    rle_block(0, total_size);
-}
-
 void rle_parallel() {
-    rle_block(0, total_size);
+    rle_sequential();
 }
-
-
 
 int main(int argc, char *argv[]) {
     if (argc == 1) {
@@ -106,8 +104,12 @@ int main(int argc, char *argv[]) {
     if (n_jobs == -1) {
         rle_sequential();
     } else {
-        printf("Doing parallel...\n");
+        // printf("Doing parallel...\n");
         rle_parallel();
+    }
+
+    if (TEST) {
+        printf("\n\n");
     }
 
     return 0;
