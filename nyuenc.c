@@ -48,7 +48,7 @@ int num_tasks_total = 0;
 int tasks_available = 0;
 pthread_mutex_t TASKS_AVAILABLE_LOCK;
 
-const int TEST = 1;
+const int TEST = 0;
 
 // =================================================================== //
 // =========================== WORKER THREAD ========================= //
@@ -59,13 +59,12 @@ int get_next_task() {
     int my_task_idx = task_pickup_idx++;
     pthread_mutex_unlock(&TASK_PICKUP_LOCK);
 
-    if (TEST) printf("\tTHREAD: About to wait for task %d to be available\n", my_task_idx);
+    if (TEST) printf("\tTHREAD: Waiting for task %d to be available\n", my_task_idx);
     pthread_mutex_lock(&TASK_PICKUP_READY[my_task_idx]);
     if (TEST) printf("\tTHREAD: Task %d is available\n", my_task_idx);
 
     return my_task_idx;
 }
-
 
 void *thread_do() {
     int my_task_idx, start_i, end_i, task_i;
@@ -76,6 +75,7 @@ void *thread_do() {
         end_i = TASK_PICKUP[my_task_idx].end_i;
         task_i = TASK_PICKUP[my_task_idx].task_i;
 
+        int dropoff_idx = start_i * 2; // Because the previous chunk could use 2x the space (if the compression is poor)
         if (TEST) printf("\tTHREAD: Beginning RLE on task %d, [%d - %d]\n", task_i, start_i, end_i);
         for (int i = start_i; i < end_i; i++) {
             unsigned char count = 1;
@@ -83,10 +83,14 @@ void *thread_do() {
                 count++;
                 i++;
             }
-            print_rle(INPUT_FILES[i], count);
+            // Place the result
+            TASK_DROPOFF[dropoff_idx] = INPUT_FILES[i];
+            TASK_DROPOFF[dropoff_idx + 1] = count;
+
+            dropoff_idx += 2; // 1 char, 1 count
         }
 
-        if (TEST) printf("\tTHREAD: PUTTING RESULT IN TASK_DROPOFF_READY[%d]\n", task_i);
+        if (TEST) printf("\tTHREAD: Dropped of task %d\n", task_i);
         pthread_mutex_unlock(&TASK_DROPOFF_READY[task_i]);
     }
     return NULL;
@@ -104,7 +108,7 @@ void add_task(int start_i, int end_i, int i) {
     TASK_PICKUP[i].end_i = end_i;
     TASK_PICKUP[i].task_i = i;
     pthread_mutex_unlock(&TASK_PICKUP_READY[i]);
-    printf("MAIN: Opened up available task at index %d\n", i);
+    if (TEST) printf("MAIN: Opened up available task at index %d\n", i);
 }
 
 //https://www.geeksforgeeks.org/mutex-lock-for-linux-thread-synchronization/
@@ -151,9 +155,15 @@ void output_results() {
         if (TEST) printf("MAIN: Waiting for task %d\n", task_idx);
         pthread_mutex_lock(&TASK_DROPOFF_READY[task_idx]);
         if (TEST) printf("MAIN: Received dropped off task %d\n", task_idx);
+        // Output the data
+        long dropoff_idx = task_idx * FOUR_KB * 2; //Because of the potential expansion
+        // printf("Reading task %d from index %d\n", task_idx, dropoff_idx);
+        while (TASK_DROPOFF[dropoff_idx] != '\0') {
+            print_rle(TASK_DROPOFF[dropoff_idx], TASK_DROPOFF[dropoff_idx + 1]);
+            dropoff_idx+=2;
+        }
         
         task_idx++;
-        // Process the data
     }
 }
 
@@ -256,8 +266,6 @@ int main(int argc, char *argv[]) {
         rle_parallel();
     }
 
-    if (TEST) {
-        printf("\n\n");
-    }
+    if (TEST) printf("\n\n"); 
     return 0;
 }
