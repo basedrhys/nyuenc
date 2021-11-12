@@ -11,6 +11,7 @@
 #include <pthread.h>
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
+
 void print_rle(char c, unsigned char count);
 
 struct Task {
@@ -108,7 +109,7 @@ void add_task(int start_i, int end_i, int i) {
     TASK_PICKUP[i].end_i = end_i;
     TASK_PICKUP[i].task_i = i;
     pthread_mutex_unlock(&TASK_PICKUP_READY[i]);
-    if (TEST) printf("MAIN: Opened up available task at index %d\n", i);
+    // if (TEST) printf("MAIN: Opened up available task at index %d\n", i);
 }
 
 //https://www.geeksforgeeks.org/mutex-lock-for-linux-thread-synchronization/
@@ -149,7 +150,7 @@ void create_tasks() {
 }
 
 void output_results() {
-    // unsigned char last_byte = 0, last_count = -1;
+    unsigned char last_byte = '\0', last_count = 0;
     int task_idx = 0;
     while (task_idx < num_tasks_total) {
         if (TEST) printf("MAIN: Waiting for task %d\n", task_idx);
@@ -157,14 +158,34 @@ void output_results() {
         if (TEST) printf("MAIN: Received dropped off task %d\n", task_idx);
         // Output the data
         long dropoff_idx = task_idx * FOUR_KB * 2; //Because of the potential expansion
-        // printf("Reading task %d from index %d\n", task_idx, dropoff_idx);
-        while (TASK_DROPOFF[dropoff_idx] != '\0') {
+
+        // Potentially merge the last byte with the new byte
+        if (last_byte != '\0') {
+            // The chunk border matches so let's combine the count
+            if (last_byte == TASK_DROPOFF[dropoff_idx]) {
+                // add the two counts together
+                TASK_DROPOFF[dropoff_idx + 1] += last_count;
+            } else {
+                // Just print the last byte from the previous chunk
+                print_rle(last_byte, last_count);
+            }
+        }
+
+        while (TASK_DROPOFF[dropoff_idx + 2] != '\0') {
             print_rle(TASK_DROPOFF[dropoff_idx], TASK_DROPOFF[dropoff_idx + 1]);
             dropoff_idx+=2;
         }
+
+        // Save the last byte from this task to merge with the next task chunk.
+        last_byte = TASK_DROPOFF[dropoff_idx]; 
+        last_count = TASK_DROPOFF[dropoff_idx + 1];
+        dropoff_idx+=2;
         
         task_idx++;
     }
+
+    // Finally, print the final byte
+    print_rle(last_byte, last_count);
 }
 
 void rle_parallel() {
