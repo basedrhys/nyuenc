@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <pthread.h>
 
+#include <semaphore.h>
+
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 
 void print_rle(char c, unsigned char count);
@@ -26,39 +28,60 @@ struct Task {
 #define FOUR_KB (1024 * 4)
 #define MAX_TASKS (ONE_GB / FOUR_KB)
 
+sem_t my_mutex;
+
 // Global static arrays
-unsigned char INPUT_FILES[ONE_GB];
+unsigned char INPUT_DATA[ONE_GB];
 
-// Task pickup & dropoff
+// Task pickup (main creates tasks to put in here)
 struct Task TASK_PICKUP[MAX_TASKS];
-long task_pickup_idx = 0;
 pthread_mutex_t TASK_PICKUP_LOCK;
-unsigned char TASK_DROPOFF[TWO_GB];
-
-// Syncronization Semaphores
 pthread_mutex_t TASK_PICKUP_READY[MAX_TASKS];
+
+// Worker threads use this to know which task to wait on next
+long task_pickup_idx = 0;
+pthread_mutex_t TASK_PICKUP_IDX_LOCK;
+
+// Task dropoff (workers place results in here)
+unsigned char *TASK_DROPOFF;
+pthread_mutex_t TASK_DROPOFF_LOCK;
 pthread_mutex_t TASK_DROPOFF_READY[MAX_TASKS];
 
-// Thread ID array
-pthread_t WORKERS[10];
+
+// TODO change this to be malloced Thread ID array
+pthread_t *WORKERS;
 
 int n_jobs = -1;
 int total_size = 0;
 int num_tasks_total = 0;
 
-int tasks_available = 0;
-pthread_mutex_t TASKS_AVAILABLE_LOCK;
-
 const int TEST = 0;
+
+// =================================================================== //
+// =========================== BIN SEMAPHORE ========================= //
+// =================================================================== //
+/* Binary semaphore */
+typedef struct BinarySemaphore {
+	pthread_mutex_t mutex;
+	pthread_cond_t   cond;
+	int value;
+} BinarySemaphore;
+
+
 
 // =================================================================== //
 // =========================== WORKER THREAD ========================= //
 // =================================================================== //
 int get_next_task() {   
     // Grab the index of the next task to wait for
-    pthread_mutex_lock(&TASK_PICKUP_LOCK);
+    pthread_mutex_lock(&TASK_PICKUP_IDX_LOCK);
     int my_task_idx = task_pickup_idx++;
-    pthread_mutex_unlock(&TASK_PICKUP_LOCK);
+    pthread_mutex_unlock(&TASK_PICKUP_IDX_LOCK);
+
+    // if (my_task_idx >= num_tasks_total) {
+    //     fprintf(stderr, "Exiting thread at task idx %d/%d...\n", my_task_idx, num_tasks_total);
+    //     return -1;
+    // }
 
     if (TEST) printf("\tTHREAD: Waiting for task %d to be available\n", my_task_idx);
     pthread_mutex_lock(&TASK_PICKUP_READY[my_task_idx]);
@@ -68,30 +91,42 @@ int get_next_task() {
 }
 
 void *thread_do() {
-    int my_task_idx, start_i, end_i, task_i;
+    int my_task_idx = -1, start_i, end_i, task_i;
+    // char my_data[FOUR_KB];
     while (1) {
         my_task_idx = get_next_task();
 
+        // if (my_task_idx == -1) {
+        //     break;
+        // }
+
+        pthread_mutex_lock(&TASK_PICKUP_LOCK);
         start_i = TASK_PICKUP[my_task_idx].start_i;
         end_i = TASK_PICKUP[my_task_idx].end_i;
         task_i = TASK_PICKUP[my_task_idx].task_i;
+        pthread_mutex_unlock(&TASK_PICKUP_LOCK);
+
+        // Grab our data to work through
+        // memcpy(my_data, )
 
         int dropoff_idx = start_i * 2; // Because the previous chunk could use 2x the space (if the compression is poor)
         if (TEST) printf("\tTHREAD: Beginning RLE on task %d, [%d - %d]\n", task_i, start_i, end_i);
         for (int i = start_i; i < end_i; i++) {
             unsigned char count = 1;
-            while (i < end_i - 1 && INPUT_FILES[i] == INPUT_FILES[i + 1]) {
+            while (i < end_i - 1 && INPUT_DATA[i] == INPUT_DATA[i + 1]) {
                 count++;
                 i++;
             }
             // Place the result
-            TASK_DROPOFF[dropoff_idx] = INPUT_FILES[i];
+            pthread_mutex_lock(&TASK_DROPOFF_LOCK);
+            TASK_DROPOFF[dropoff_idx] = INPUT_DATA[i];
             TASK_DROPOFF[dropoff_idx + 1] = count;
+            pthread_mutex_unlock(&TASK_DROPOFF_LOCK);
 
             dropoff_idx += 2; // 1 char, 1 count
         }
 
-        if (TEST) printf("\tTHREAD: Dropped of task %d\n", task_i);
+        // if (TEST) printf("\tTHREAD: Dropped of task %d\n", task_i);
         pthread_mutex_unlock(&TASK_DROPOFF_READY[task_i]);
     }
     return NULL;
@@ -105,9 +140,12 @@ void *thread_do() {
 // =================================================================== //
 void add_task(int start_i, int end_i, int i) {
     // Add a task to the queue
+    pthread_mutex_lock(&TASK_PICKUP_LOCK);
     TASK_PICKUP[i].start_i = start_i;
     TASK_PICKUP[i].end_i = end_i;
     TASK_PICKUP[i].task_i = i;
+    pthread_mutex_unlock(&TASK_PICKUP_LOCK);
+
     pthread_mutex_unlock(&TASK_PICKUP_READY[i]);
     // if (TEST) printf("MAIN: Opened up available task at index %d\n", i);
 }
@@ -120,13 +158,15 @@ void init_mutex(pthread_mutex_t *mtx, char* err_msg, int lock) {
     }
     if (lock)
         pthread_mutex_lock(mtx);
-    else
-        pthread_mutex_unlock(mtx);
+    // else
+    //     pthread_mutex_unlock(mtx);
 }
 
 void init_semaphores() {
-    init_mutex(&TASKS_AVAILABLE_LOCK, "Task Available lock init has failed\n", 0);
+    init_mutex(&TASK_PICKUP_IDX_LOCK, "Task Pickup idx lock has failed\n", 0);
+
     init_mutex(&TASK_PICKUP_LOCK, "Task Pickup lock has failed\n", 0);
+    init_mutex(&TASK_DROPOFF_LOCK, "Task Dropoff lock has failed\n", 0);
 
     for (int i = 0; i < num_tasks_total + 10; i++) {        
         init_mutex(&TASK_PICKUP_READY[i], "Task Pickup Mutex init has failed\n", 1);
@@ -135,9 +175,11 @@ void init_semaphores() {
 }
 
 void create_thread_pool() {
+    WORKERS = (pthread_t*) malloc ((n_jobs + 1) * sizeof(pthread_t));
     for (int i = 0; i < n_jobs; i++) {
         pthread_create(&WORKERS[i], NULL, thread_do, NULL);
     }
+    WORKERS[n_jobs] = 0;
 }
 
 void create_tasks() {
@@ -150,7 +192,8 @@ void create_tasks() {
 }
 
 void output_results() {
-    unsigned char last_byte = '\0', last_count = 0;
+    unsigned char last_byte = '\0', this_byte = '\0', next_byte = '\0';
+    unsigned char last_count = 0, this_count = 0;
     int task_idx = 0;
     while (task_idx < num_tasks_total) {
         if (TEST) printf("MAIN: Waiting for task %d\n", task_idx);
@@ -159,26 +202,39 @@ void output_results() {
         // Output the data
         long dropoff_idx = task_idx * FOUR_KB * 2; //Because of the potential expansion
 
+        pthread_mutex_lock(&TASK_DROPOFF_LOCK);
+        this_byte = TASK_DROPOFF[dropoff_idx];
+        this_count = TASK_DROPOFF[dropoff_idx + 1];
+        next_byte = TASK_DROPOFF[dropoff_idx + 2];
+        pthread_mutex_unlock(&TASK_DROPOFF_LOCK);
+
         // Potentially merge the last byte with the new byte
         if (last_byte != '\0') {
             // The chunk border matches so let's combine the count
-            if (last_byte == TASK_DROPOFF[dropoff_idx]) {
+            if (last_byte == this_byte) {
                 // add the two counts together
-                TASK_DROPOFF[dropoff_idx + 1] += last_count;
+                this_count += last_count;
             } else {
                 // Just print the last byte from the previous chunk
                 print_rle(last_byte, last_count);
             }
         }
 
-        while (TASK_DROPOFF[dropoff_idx + 2] != '\0') {
-            print_rle(TASK_DROPOFF[dropoff_idx], TASK_DROPOFF[dropoff_idx + 1]);
+        while (next_byte != '\0') {
+            print_rle(this_byte, this_count);
             dropoff_idx+=2;
+
+            pthread_mutex_lock(&TASK_DROPOFF_LOCK);
+            this_byte = TASK_DROPOFF[dropoff_idx];
+            this_count = TASK_DROPOFF[dropoff_idx + 1];
+            next_byte = TASK_DROPOFF[dropoff_idx + 2];
+            pthread_mutex_unlock(&TASK_DROPOFF_LOCK);
         }
 
         // Save the last byte from this task to merge with the next task chunk.
-        last_byte = TASK_DROPOFF[dropoff_idx]; 
-        last_count = TASK_DROPOFF[dropoff_idx + 1];
+        last_byte = this_byte; 
+        last_count = this_count;
+
         dropoff_idx+=2;
         
         task_idx++;
@@ -194,10 +250,21 @@ void rle_parallel() {
     if (TEST) {
         printf("Num tasks = %d\n", num_tasks_total);
     }
+    // Allocate the result array
+    long num_result_bytes = total_size * 2;
+    TASK_DROPOFF = (unsigned char*) malloc ((num_result_bytes + 1) * sizeof(char));
+
     init_semaphores();
     create_thread_pool();
     create_tasks();
     output_results();
+
+    // // Wait for all threads to close
+    // for (int i = 0; i < n_jobs; i++) {
+    //     pthread_join(WORKERS[i], NULL);
+    // }
+
+    free(TASK_DROPOFF);
 }
 
 
@@ -234,7 +301,7 @@ void parse_opts(int argc, char *argv[]) {
 void map_files(int argc, char *argv[]) {
     // https://stackoverflow.com/questions/55928474/how-to-read-multiple-txt-files-into-a-single-buffer
     // TODO truncate files that are too large
-    unsigned char *p = INPUT_FILES;
+    unsigned char *p = INPUT_DATA;
     for (int index = optind; index < argc; index++) {
         char* filename = argv[index];
         FILE *fp = fopen(filename, "rb");
@@ -264,11 +331,11 @@ void print_rle(char c, unsigned char count) {
 void rle_sequential() {
     for (int i = 0; i < total_size; i++) {
         unsigned char count = 1;
-        while (i < total_size - 1 && INPUT_FILES[i] == INPUT_FILES[i + 1]) {
+        while (i < total_size - 1 && INPUT_DATA[i] == INPUT_DATA[i + 1]) {
             count++;
             i++;
         }
-        print_rle(INPUT_FILES[i], count);
+        print_rle(INPUT_DATA[i], count);
     }
 }
 
