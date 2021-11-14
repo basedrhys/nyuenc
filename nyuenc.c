@@ -277,11 +277,15 @@ void parse_opts(int argc, char *argv[]) {
  */
 void map_files(int argc, char *argv[]) {
     // https://stackoverflow.com/questions/55928474/how-to-read-multiple-txt-files-into-a-single-buffer
-    // TODO truncate files that are too large
     unsigned char *p = INPUT_DATA;
     for (int index = optind; index < argc; index++) {
         char* filename = argv[index];
         FILE *fp = fopen(filename, "rb");
+
+        if (fp == NULL) {
+            fprintf(stderr, "Error opening file...\n");
+            continue;
+        }
 
         fseek(fp, 0, SEEK_END);
         long bytes = ftell(fp);
@@ -294,6 +298,9 @@ void map_files(int argc, char *argv[]) {
 
         fclose(fp);
     }
+
+    // Cap the size in case we're dealing with a >1gb file
+    total_size = MIN(ONE_GB - 1, total_size);
 }
 
 void print_rle(char c, unsigned char count) {
